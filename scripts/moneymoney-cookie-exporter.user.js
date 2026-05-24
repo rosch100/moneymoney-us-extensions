@@ -1,11 +1,15 @@
 // ==UserScript==
-// @name         Fidelity Cookie Exporter for MoneyMoney
+// @name         MoneyMoney Cookie Exporter (US-Banken)
 // @namespace    https://github.com/rosch100/moneymoney-us-extensions
-// @version      3.0
-// @description  Exportiert Fidelity-Session-Cookies (inkl. HttpOnly) für MoneyMoney
+// @version      1.0
+// @description  Session-Cookies für MoneyMoney — Bank of America, Fidelity, Presidential Bank
 // @author       rosch100
 // @match        https://*.fidelity.com/*
 // @match        https://fidelity.com/*
+// @match        https://*.bankofamerica.com/*
+// @match        https://bankofamerica.com/*
+// @match        https://*.presidentialpcbanking.com/*
+// @match        https://presidentialpcbanking.com/*
 // @grant        GM.cookie
 // @grant        GM_cookie
 // @grant        GM_setClipboard
@@ -17,29 +21,68 @@
 (function () {
   'use strict';
 
-  const CRITICAL = ['_abck', 'bm_sz', 'ATC', 'ET', 'SESSION_SCTX', 'PIT'];
-
-  const PRIORITY = [
-    '_abck', 'bm_sz', 'bm_s', 'bm_sv', 'bm_so', 'bm_ss', 'bm_mi', 'bm_lso', 'ak_bmsc',
-    'ATC', 'ATT', 'ET', 'SESSION_SCTX', 'JSESSIONID',
-    'FC', 'MC', 'PIT', 'RC', 'SC', 'RtAzC', 'RtEntC',
-    'PORTSUM_XSRF-TOKEN', 'FVL-XSRF-TOKEN', 'ap180806-XSRF-TOKEN',
-    'RB-XSRF-TOKEN', 'URB-XSRF-TOKEN',
-    '_fvl_neo.csrf', 'ap180806_neo.csrf', 'portsum_.csrf',
-    'AP171348_HEADER_APP_SERVICE_COOKIE',
-    'AWSALB', 'AWSALBCORS',
-  ];
-
-  const ORIGINS = [
-    'https://digital.fidelity.com',
-    'https://login.fidelity.com',
-    'https://www.fidelity.com',
-    'https://ecaap.fidelity.com',
-    'https://fidelity.com',
-  ];
+  const BANKS = {
+    fidelity: {
+      label: 'Fidelity',
+      match: /fidelity\.com$/i,
+      cookieDomain: '.fidelity.com',
+      origins: [
+        'https://digital.fidelity.com',
+        'https://login.fidelity.com',
+        'https://www.fidelity.com',
+        'https://ecaap.fidelity.com',
+        'https://fidelity.com',
+      ],
+      critical: ['_abck', 'bm_sz', 'ATC', 'ET', 'SESSION_SCTX', 'PIT'],
+      priority: [
+        '_abck', 'bm_sz', 'bm_s', 'bm_sv', 'bm_so', 'bm_ss', 'bm_mi', 'bm_lso', 'ak_bmsc',
+        'ATC', 'ATT', 'ET', 'SESSION_SCTX', 'JSESSIONID',
+        'FC', 'MC', 'PIT', 'RC', 'SC',
+        'PORTSUM_XSRF-TOKEN', 'FVL-XSRF-TOKEN',
+        'AWSALB', 'AWSALBCORS',
+      ],
+    },
+    boa: {
+      label: 'Bank of America',
+      match: /bankofamerica\.com$/i,
+      cookieDomain: '.bankofamerica.com',
+      origins: [
+        'https://secure.bankofamerica.com',
+        'https://www.bankofamerica.com',
+        'https://bankofamerica.com',
+      ],
+      critical: ['SMSESSION', 'SSOTOKEN', 'LSESSIONID'],
+      priority: [
+        'SMSESSION', 'SSOTOKEN', 'LSESSIONID', 'GSID', 'CSID', 'MMID', 'cdSNum', 'ctd',
+        'bm_sv', 'bm_sz', 'bmuid', 'ak_bmsc',
+      ],
+    },
+    presidential: {
+      label: 'Presidential Bank',
+      match: /presidentialpcbanking\.com$/i,
+      cookieDomain: '.presidentialpcbanking.com',
+      origins: ['https://www.presidentialpcbanking.com'],
+      critical: ['SESSION_TOKEN', 'rftoken'],
+      priority: [
+        'SESSION_TOKEN', 'SESSION', 'FMISSESSIONID',
+        'tkt', 'at', 'ag', 'rftoken', 'USPIBID',
+        '__cf_bm', '_cfuvid', 'cf_clearance',
+      ],
+    },
+  };
 
   let panelReady = false;
   let lastSource = 'document.cookie';
+
+  function detectBank() {
+    const host = location.hostname.replace(/^www\./, '');
+    for (const bank of Object.values(BANKS)) {
+      if (bank.match.test(host)) {
+        return bank;
+      }
+    }
+    return null;
+  }
 
   function parseDocumentCookies() {
     const cookies = {};
@@ -74,11 +117,11 @@
     });
   }
 
-  async function collectCookiesViaGM() {
+  async function collectCookiesViaGM(bank) {
     const merged = {};
     const seen = new Set();
 
-    async function addFromList(details, label) {
+    async function addFromList(details) {
       const list = await gmCookieList(details);
       list.forEach(function (item) {
         if (!item || !item.name || seen.has(item.name)) {
@@ -91,19 +134,19 @@
     }
 
     let apiCount = 0;
-    if (typeof GM !== 'undefined' && GM.cookie) {
-      apiCount += await addFromList({ domain: '.fidelity.com' }, 'domain');
+    if (typeof GM !== 'undefined' && GM.cookie && bank.cookieDomain) {
+      apiCount += await addFromList({ domain: bank.cookieDomain });
     }
-    for (const origin of ORIGINS) {
-      apiCount += await addFromList({ url: origin + '/' }, origin);
+    for (const origin of bank.origins) {
+      apiCount += await addFromList({ url: origin + '/' });
     }
 
     return { cookies: merged, apiCount: apiCount };
   }
 
-  async function collectAllCookies() {
+  async function collectAllCookies(bank) {
     const docCookies = parseDocumentCookies();
-    const gm = await collectCookiesViaGM();
+    const gm = await collectCookiesViaGM(bank);
 
     if (gm.apiCount > 0) {
       lastSource = 'GM.cookie + document.cookie';
@@ -114,11 +157,11 @@
     return docCookies;
   }
 
-  function formatCookies(cookies) {
+  function formatCookies(cookies, bank) {
     const pairs = [];
     const added = new Set();
 
-    PRIORITY.forEach(function (name) {
+    bank.priority.forEach(function (name) {
       if (cookies[name] && !added.has(name)) {
         pairs.push(name + '=' + cookies[name]);
         added.add(name);
@@ -135,8 +178,8 @@
     return pairs.join(';');
   }
 
-  function missingCritical(cookies) {
-    return CRITICAL.filter(function (name) { return !cookies[name]; });
+  function missingCritical(cookies, bank) {
+    return bank.critical.filter(function (name) { return !cookies[name]; });
   }
 
   async function copyText(text) {
@@ -194,12 +237,12 @@
     el.innerHTML = html;
   }
 
-  async function refreshStatus() {
-    const cookies = await collectAllCookies();
+  async function refreshStatus(bank) {
+    const cookies = await collectAllCookies(bank);
     const count = Object.keys(cookies).length;
-    const missing = missingCritical(cookies);
+    const missing = missingCritical(cookies, bank);
     const httpOnlyHint = lastSource === 'document.cookie'
-      ? '<br><small>HttpOnly fehlt — Tampermonkey mit GM.cookie nutzen oder HAR-Export.</small>'
+      ? '<br><small>HttpOnly fehlt — Tampermonkey mit GM.cookie oder HAR-Export.</small>'
       : '<br><small>Quelle: ' + lastSource + '</small>';
 
     if (count === 0) {
@@ -218,9 +261,9 @@
     return cookies;
   }
 
-  async function exportCookies() {
-    const cookies = await collectAllCookies();
-    const output = 'COOKIE:' + formatCookies(cookies);
+  async function exportCookies(bank) {
+    const cookies = await collectAllCookies(bank);
+    const output = 'COOKIE:' + formatCookies(cookies, bank);
     const copied = await copyText(output);
     const count = Object.keys(cookies).length;
     const debug = document.getElementById('mm-debug');
@@ -233,7 +276,7 @@
 
     if (copied) {
       setStatus('<strong>Kopiert</strong> — ' + count + ' Cookies. Sofort in MoneyMoney einfügen.', 'ok');
-      notify('Fidelity → MoneyMoney', count + ' Cookies kopiert.');
+      notify(bank.label + ' → MoneyMoney', count + ' Cookies kopiert.');
       if (copyBtn) {
         copyBtn.textContent = 'Kopiert';
         setTimeout(function () { copyBtn.textContent = 'Cookies kopieren'; }, 2000);
@@ -243,7 +286,7 @@
     }
   }
 
-  function createPanel() {
+  function createPanel(bank) {
     if (panelReady || document.getElementById('mm-cookie-panel')) {
       return;
     }
@@ -253,7 +296,7 @@
     root.innerHTML =
       '<button id="mm-toggle" title="Cookie-Export (Alt+C)">MM</button>' +
       '<div id="mm-panel">' +
-      '  <div id="mm-header"><span>Fidelity → MoneyMoney</span><button id="mm-close" type="button">×</button></div>' +
+      '  <div id="mm-header"><span>' + bank.label + ' → MoneyMoney</span><button id="mm-close" type="button">×</button></div>' +
       '  <div id="mm-status">Lade…</div>' +
       '  <button id="mm-copy" type="button">Cookies kopieren</button>' +
       '  <textarea id="mm-debug" readonly spellcheck="false"></textarea>' +
@@ -290,19 +333,24 @@
     toggle.onclick = function () {
       panel.classList.add('open');
       toggle.classList.add('hidden');
-      refreshStatus();
+      refreshStatus(bank);
     };
 
-    document.getElementById('mm-copy').onclick = exportCookies;
+    document.getElementById('mm-copy').onclick = function () { exportCookies(bank); };
 
-    refreshStatus();
+    refreshStatus(bank);
   }
 
   function init() {
+    const bank = detectBank();
+    if (!bank) {
+      return;
+    }
+
     if (document.body) {
-      createPanel();
+      createPanel(bank);
     } else {
-      document.addEventListener('DOMContentLoaded', createPanel, { once: true });
+      document.addEventListener('DOMContentLoaded', function () { createPanel(bank); }, { once: true });
     }
   }
 

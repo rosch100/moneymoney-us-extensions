@@ -50,16 +50,18 @@ Beispiel: `COOKIE:SMSESSION=eyJ...;SSOTOKEN=eyJ...`
 
 4. Ausgabe als Passwort in MoneyMoney einfügen.
 
-**Variante B — Fidelity Userscript**
+**Variante B — Userscript (alle Cookie-Import-Banken)**
 
-Tampermonkey in Chrome, Firefox oder Safari. Das Skript liest Cookies über `GM.cookie` (inkl. HttpOnly) von allen Fidelity-Subdomains; Fallback ist `document.cookie`.
+Tampermonkey in Chrome, Firefox oder Safari. Erkennt die Bank automatisch, liest Cookies über `GM.cookie` (inkl. HttpOnly).
 
 1. [Tampermonkey](https://www.tampermonkey.net/) installieren.
-2. `scripts/fidelity-cookie-exporter.user.js` als Userscript anlegen.
-3. Bei Fidelity einloggen, Portfolio öffnen.
+2. `scripts/moneymoney-cookie-exporter.user.js` als Userscript anlegen.
+3. Bei der Bank einloggen (BoA: Kontoübersicht, Fidelity: Portfolio, Presidential: Dashboard).
 4. Button **MM** (Alt+C) → **Cookies kopieren** → als Passwort in MoneyMoney einfügen.
 
-Ohne `GM.cookie` (z. B. reines Bookmarklet): HAR-Export (Variante A) verwenden.
+Unterstützt: Bank of America, Fidelity, Presidential Bank.
+
+Ohne `GM.cookie`: HAR-Export (Variante A).
 
 **Variante C — Manuell (BoA)**
 
