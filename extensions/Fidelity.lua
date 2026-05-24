@@ -19,7 +19,7 @@
 --
 
 WebBanking {
-  version = 1.31,
+  version = "1.0.0",
   url = "https://www.fidelity.com",
   services = {"Fidelity"},
   description = "Fidelity Investments - GraphQL API with Cookie Import support"

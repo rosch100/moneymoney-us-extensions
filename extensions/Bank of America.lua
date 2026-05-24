@@ -29,7 +29,7 @@
 --
 
 WebBanking {
-  version = 1.38,
+  version = "1.0.0",
   url = "https://secure.bankofamerica.com",
   services = {"Bank of America"},
   description = "Bank of America - Cookie Import mode (workaround for RSA encryption)"

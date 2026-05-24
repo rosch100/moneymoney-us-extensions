@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """BoA-Cookies aus HAR für MoneyMoney. Usage: python3 extract-boa-cookies.py datei.har"""
 
+__version__ = "1.0.0"
+
 import json
 import sys
 

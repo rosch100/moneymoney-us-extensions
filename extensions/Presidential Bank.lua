@@ -28,7 +28,7 @@
 --
 
 WebBanking {
-  version = 1.83,
+  version = "1.0.0",
   url = "https://www.presidentialpcbanking.com",
   services = {"Presidential Bank"},
   description = "Presidential Bank - Supports Normal Login (MFA) and Cookie Import Mode"

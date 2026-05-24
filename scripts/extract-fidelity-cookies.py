@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Fidelity-Cookies aus HAR für MoneyMoney. Usage: python3 extract-fidelity-cookies.py datei.har"""
 
+__version__ = "1.0.0"
+
 import json
 import subprocess
 import sys
