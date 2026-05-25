@@ -95,15 +95,18 @@ local function normalizeCurrency(c)
   return c
 end
 
--- Form-Submit über die MoneyMoney-HTML/XPath-API (idiomatisch laut Doku):
---   connection:request(formNode:submit())
--- Klare Fehlermeldung, falls XPath die Form nicht findet (sonst nil-Crash im
--- nachfolgenden connection:request).
+-- Form-Submit über die MoneyMoney-HTML/XPath-API.
+-- Connection:request liefert (content, charset, mimeType, filename, headers).
+-- Wir geben nur `content` zurück, damit die Caller mit (content, err) sicher
+-- destrukturieren koennen — sonst landet "utf-8" als zweiter Rueckgabewert
+-- und wird als Fehlertext interpretiert.
+-- Wenn die XPath-Suche leer ist: nil + Fehlertext.
 local function submitForm(formNode)
   if not formNode or formNode:length() == 0 then
     return nil, "Form-Element nicht gefunden (XPath traf nicht)."
   end
-  return connection:request(formNode:submit())
+  local content = connection:request(formNode:submit())
+  return content
 end
 
 -- ============================================================================
