@@ -109,6 +109,18 @@ local function submitForm(formNode)
   return content
 end
 
+-- MFA-Challenge-Table fuer InitializeSession2; einheitlich fuer Initial-Frage
+-- und Retry. MoneyMoney ruft InitializeSession2 mit step=N+1 erneut auf, wenn
+-- ein Challenge-Table (statt eines Fehler-Strings) zurueckgegeben wird.
+-- Siehe Web Banking API, "Anmeldung mit Zwei-Faktor-Authentifizierung".
+local function mfaChallenge(text)
+  return {
+    title     = "Shareview Authentifizierung",
+    challenge = text or "Bitte den 6-stelligen Authentication Code aus der Shareview-App oder E-Mail eingeben.",
+    label     = "Authentication Code"
+  }
+end
+
 -- ============================================================================
 -- WebBanking-Lifecycle
 -- ============================================================================
@@ -220,43 +232,50 @@ function submitCredentials(username, password, day, month, year)
 
   session.mfaHtmlString = mfaContent
   session.awaitingMfa = true
-  return {
-    title     = "Shareview Authentifizierung",
-    challenge = "Bitte den 6-stelligen Authentication Code aus der Shareview-App oder E-Mail eingeben.",
-    label     = "Authentication Code"
-  }
+  return mfaChallenge()
 end
 
 function submitMfaCode(credentials)
-  session.awaitingMfa = false
+  if not session.mfaHtmlString then return LoginFailed end
+
   local code = credentials[1]
   if not code or not code:match("^%s*%d+%s*$") then
-    return "Ungültiger Authentication Code: nur Ziffern erwartet."
+    -- Format-Fehler: MFA-State erhalten, User soll Code erneut eingeben.
+    return mfaChallenge("Ungültiger Authentication Code (nur Ziffern). Bitte erneut eingeben.")
   end
   code = trim(code)
 
-  if not session.mfaHtmlString then return LoginFailed end
   local mfaHtml = HTML(session.mfaHtmlString)
-
   mfaHtml:xpath('//input[contains(@id, "txtVerificationCode") or contains(@name, "txtVerificationCode")]'):attr("value", code)
   local submitBtn = mfaHtml:xpath('//input[contains(@id, "btnSubmitOtp") or contains(@name, "btnSubmitOtp")]'):attr("name")
   mfaHtml:xpath('//input[@name="__EVENTTARGET"]'):attr("value", submitBtn or "")
 
   MM.printStatus("Shareview: Authentication Code senden...")
   local otpResponse, submitErr = submitForm(mfaHtml:xpath('//form[@name="aspnetForm"]'))
-  session.mfaHtmlString = nil
 
-  if submitErr then return "MFA fehlgeschlagen: " .. submitErr end
+  if submitErr then
+    session.awaitingMfa = false
+    session.mfaHtmlString = nil
+    return "MFA fehlgeschlagen: " .. submitErr
+  end
   if not otpResponse then
+    session.awaitingMfa = false
+    session.mfaHtmlString = nil
     return "MFA fehlgeschlagen: Keine Antwort vom Server."
   end
 
+  -- OTP abgelehnt: aktualisierte MFA-Page (mit frischem VIEWSTATE) als Basis
+  -- fuer den naechsten Versuch behalten und Retry-Challenge zurueckgeben,
+  -- statt den gesamten Login abzubrechen.
   if otpResponse:match("Please enter a 6 digit Authentication Code")
      or otpResponse:match('id="otpErrorLabelWrapper"[^>]*>%s*<span>') then
-    return "Authentication Code abgelehnt. Bitte erneut versuchen."
+    session.mfaHtmlString = otpResponse
+    return mfaChallenge("Authentication Code abgelehnt. Bitte erneut versuchen.")
   end
 
-  -- WS-Federation/SAML-Hops nachfahren (Browser würde via JS auto-submitten).
+  -- Erfolg: MFA-State raeumen, Federation-Hops + Holdings-Check.
+  session.awaitingMfa = false
+  session.mfaHtmlString = nil
   otpResponse = followFederationHops(otpResponse, 5)
 
   local holdings = connection:get(CONSTANTS.holdingsUrl)
@@ -265,10 +284,10 @@ function submitMfaCode(credentials)
     return nil
   end
 
-  if otpResponse and otpResponse:lower():match("authentication code") then
-    return "Authentication Code abgelehnt. Bitte erneut versuchen."
-  end
-  return "MFA fehlgeschlagen. Bitte Cookie-Import verwenden."
+  -- Fallback: Federation/Holdings haben nicht angeschlagen — Konto eventuell
+  -- gesperrt (Shareview sperrt nach mehreren OTP-Fehlern temporaer). Hier
+  -- ist Retry sinnlos, kompletter Restart noetig.
+  return "MFA fehlgeschlagen. Bitte Anmeldung erneut starten; bei wiederholten Fehlversuchen kann das Konto temporaer gesperrt sein."
 end
 
 -- ADFS / WS-Federation-Pages enthalten <form name="hiddenform">, die der
