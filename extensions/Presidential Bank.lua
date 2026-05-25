@@ -33,12 +33,23 @@ function InitializeSession2(protocol, bankCode, step, credentials, interactive)
 
   if step == 1 then
     return handleLoginStep1(credentials)
-  elseif step == 2 then
-    return handleMfaStep(credentials)
-  else
-    -- Step 3: Cookie import after MFA (when rftoken is missing)
+  end
+
+  -- Folge-Steps state-basiert dispatchen, damit Retries (z.B. falscher
+  -- OTP-Code oder ungueltige Methodenauswahl) im richtigen Handler landen.
+  -- MoneyMoney inkrementiert step bei jedem Re-Prompt; ein step-basierter
+  -- Dispatcher wuerde Retries faelschlich zum Cookie-Import umleiten.
+  if session.waitingForMethodSelection then
+    return handleMethodSelection(credentials[1])
+  end
+  if session.waitingForMfaCode then
+    return verifyMfaCode(credentials[1])
+  end
+  if session.waitingForCookieImport then
     return handleCookieImportStep(credentials)
   end
+
+  return LoginFailed
 end
 
 function handleLoginStep1(credentials)
@@ -145,13 +156,8 @@ function getMfaConfig()
   session.mfaMethods = extractMfaMethods(mfaData)
 
   if #session.mfaMethods == 0 then
-    -- No MFA methods, try TOTP fallback
-    session.mfaStep = "enter_totp"
-    return {
-      title = "Two-Factor Authentication",
-      challenge = "Enter the 6-digit code from your Authenticator app:",
-      label = "TOTP Code"
-    }
+    session.waitingForMfaCode = true
+    return mfaCodeChallenge(nil)
   end
 
   session.waitingForMethodSelection = true
@@ -221,62 +227,63 @@ function buildMfaMethod(dest)
   return method
 end
 
-function buildMfaSelectionChallenge()
+-- SSOT fuer Selection-Challenge; optional mit Prefix-Text fuer Retry-Fall.
+function buildMfaSelectionChallenge(prefix)
   local options = {}
   for i, method in ipairs(session.mfaMethods) do
     table.insert(options, i .. ". " .. method.name)
   end
-
+  local body = "Select verification method:\n\n" .. table.concat(options, "\n") .. "\n\nEnter number:"
   return {
     title = "Two-Factor Authentication",
-    challenge = "Select verification method:\n\n" .. table.concat(options, "\n") .. "\n\nEnter number:",
+    challenge = (prefix and prefix .. "\n\n" or "") .. body,
     label = "Option (1-" .. #session.mfaMethods .. ")"
   }
 end
 
-function handleMfaStep(credentials)
-  local userInput = credentials[1]
-
-  if not session.cookies or session.cookies == "" then
-    return "MFA verification failed: No active session"
+-- SSOT fuer Code-Eingabe-Challenge (TOTP oder per Kanal versendet); optional
+-- mit Prefix-Text fuer Retry nach abgelehntem Code. MoneyMoney ruft
+-- InitializeSession2 mit step=N+1 erneut auf, wenn statt eines Fehler-Strings
+-- ein {title, challenge, label}-Table zurueckgegeben wird (Web Banking API:
+-- "Anmeldung mit Zwei-Faktor-Authentifizierung").
+function mfaCodeChallenge(method, prefix)
+  local isPushed = method and method.type and method.type ~= "totp"
+  local body
+  if isPushed then
+    body = "A code has been sent to " .. method.name .. ".\n\nEnter the code:"
+  else
+    body = "Enter the 6-digit code from your Authenticator app:"
   end
-
-  if session.waitingForMethodSelection then
-    return handleMethodSelection(userInput)
-  end
-
-  if session.waitingForCookieImport then
-    return handleCookieImportStep(credentials)
-  end
-
-  return verifyMfaCode(userInput)
+  return {
+    title = "Two-Factor Authentication",
+    challenge = (prefix and prefix .. "\n\n" or "") .. body,
+    label = isPushed and "Verification Code" or "TOTP Code"
+  }
 end
 
 function handleMethodSelection(userInput)
-  local methodIndex = tonumber(userInput)
+  if not session.cookies or session.cookies == "" then
+    session.waitingForMethodSelection = false
+    return "MFA verification failed: No active session"
+  end
 
+  local methodIndex = tonumber(userInput)
   if not methodIndex or methodIndex < 1 or methodIndex > #session.mfaMethods then
-    return "Invalid selection. Please enter a number between 1 and " .. #session.mfaMethods
+    -- Selection-State erhalten, User soll erneut waehlen.
+    return buildMfaSelectionChallenge(
+      "Invalid selection. Please enter a number between 1 and " .. #session.mfaMethods .. "."
+    )
   end
 
   session.selectedMfaMethod = session.mfaMethods[methodIndex]
   session.waitingForMethodSelection = false
+  session.waitingForMfaCode = true
 
-  if session.selectedMfaMethod.type == "totp" then
-    return {
-      title = "Two-Factor Authentication",
-      challenge = "Enter the 6-digit code from your Authenticator app:",
-      label = "TOTP Code"
-    }
+  if session.selectedMfaMethod.type ~= "totp" then
+    requestVerificationCode(session.selectedMfaMethod)
   end
 
-  requestVerificationCode(session.selectedMfaMethod)
-
-  return {
-    title = "Two-Factor Authentication",
-    challenge = "A code has been sent to " .. session.selectedMfaMethod.name .. ".\n\nEnter the code:",
-    label = "Verification Code"
-  }
+  return mfaCodeChallenge(session.selectedMfaMethod)
 end
 
 function requestVerificationCode(method)
@@ -298,11 +305,22 @@ function requestVerificationCode(method)
 end
 
 function verifyMfaCode(code)
-  session.csrfToken = session.csrfToken or extractCsrfTokenFromCookies(session.cookies) or ""
+  if not session.cookies or session.cookies == "" then
+    session.waitingForMfaCode = false
+    return "MFA verification failed: No active session"
+  end
 
   local method = session.selectedMfaMethod
-  local submitUrl, bodyTable
 
+  -- Format-Vorpruefung: leere/nicht-numerische Eingabe -> Retry-Challenge.
+  if not code or not code:match("^%s*%d+%s*$") then
+    return mfaCodeChallenge(method, "Invalid code (digits only). Please try again.")
+  end
+  code = code:gsub("^%s*(.-)%s*$", "%1")
+
+  session.csrfToken = session.csrfToken or extractCsrfTokenFromCookies(session.cookies) or ""
+
+  local submitUrl, bodyTable
   if method and method.type ~= "totp" then
     submitUrl = CONSTANTS.authApi .. "/mfa/submit?displayMethod=" .. method.protocol
     bodyTable = { csrftoken = session.csrfToken, otp = code, destId = method.id }
@@ -316,19 +334,28 @@ function verifyMfaCode(code)
   local mfaResponse = connection:request("POST", submitUrl, body, "application/json", buildApiHeaders(session.cookies))
 
   if not mfaResponse then
+    session.waitingForMfaCode = false
     return "MFA verification failed: No response from server"
   end
 
-  -- Update cookies after MFA submit (only if we got visible cookies, preserve HttpOnly)
   local newCookies = connection:getCookies()
   if newCookies and newCookies:match("SESSION") then
     session.cookies = newCookies
   end
 
   if not isMfaSuccess(mfaResponse) then
-    return "Invalid code. Please try again."
+    -- Falscher Code: MFA-State erhalten, neuen CSRF-Token aus Response
+    -- uebernehmen falls vorhanden (manche Server rotieren ihn nach jedem
+    -- Submit) und Retry-Challenge zurueck, statt Login abzubrechen.
+    local data = parseJson(mfaResponse)
+    if data then
+      local freshCsrf = extractCsrfToken(data)
+      if freshCsrf then session.csrfToken = freshCsrf end
+    end
+    return mfaCodeChallenge(method, "Invalid code. Please try again.")
   end
 
+  session.waitingForMfaCode = false
   return finalizeLogin()
 end
 
