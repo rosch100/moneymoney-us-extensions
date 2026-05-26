@@ -4,7 +4,7 @@
 __version__ = "1.0.0"
 
 import json
-import subprocess
+import subprocess  # nosec B404
 import sys
 
 
@@ -100,7 +100,7 @@ def main(har_path):
     print(result)
 
     try:
-        subprocess.run(["pbcopy"], input=result, text=True, check=True)
+        subprocess.run(["pbcopy"], input=result, text=True, check=True)  # nosec B603,B607
         print("In Zwischenablage kopiert.", file=sys.stderr)
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
