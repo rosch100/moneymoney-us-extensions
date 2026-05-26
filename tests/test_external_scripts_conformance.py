@@ -92,10 +92,11 @@ def assert_python_script_conformance(py_path: pathlib.Path) -> None:
         sample = {
             # mindestens 2 PRIORITY-Namen, damit Semikolon-Trennung geprüft werden kann
             # (Details pro Script sind in PRIORITY hinterlegt)
-            "SESSION_TOKEN": "X",
-            "rftoken": "Y",
-            "FedAuth": "Z",
-            "ASP.NET_SessionId": "W",
+            # Wichtig: Bandit meldet sonst bei sehr kurzen Placeholder-Strings (z.B. "X") False-Positives.
+            "SESSION_TOKEN": "session_token_example_value",
+            "rftoken": "rftoken_example_value",
+            "FedAuth": "fedauth_example_value",
+            "ASP.NET_SessionId": "aspnet_sessionid_example_value",
         }
 
         out = fmt(sample)
