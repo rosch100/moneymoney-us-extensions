@@ -1,4 +1,4 @@
-name: CI
+name: MoneyMoney Extensions Checks
 
 on:
   push:
