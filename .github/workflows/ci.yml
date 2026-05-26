@@ -1,4 +1,4 @@
-name: MoneyMoney Extensions Checks
+name: Extension tests
 
 on:
   push:
