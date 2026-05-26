@@ -6,7 +6,7 @@
 /lua_modules/
 /.luarocks/
 /.vscode/
-/moneymoney-dev-1.rockspec
+!/moneymoney-dev-1.rockspec
 
 # Sensitive Daten / HAR-Exporte
 *.har
